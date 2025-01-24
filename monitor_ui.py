@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QPushButton,
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         if not Dialog.objectName():
-            Dialog.setObjectName(u"Dialog")
+            Dialog.setObjectName(u"Computer Monitor")
         Dialog.resize(400, 300)
         self.verticalLayout = QVBoxLayout(Dialog)
         self.verticalLayout.setObjectName(u"verticalLayout")

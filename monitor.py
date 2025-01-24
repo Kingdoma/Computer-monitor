@@ -1,13 +1,14 @@
 import sys
 import psutil
 import hid
+import win32pdh  # For Windows Performance Counters
 from PySide6.QtWidgets import QApplication, QDialog
 from PySide6.QtCore import Slot, QTimer
 from monitor_ui import Ui_Dialog
 
 # Replace with your device-specific values
 VENDOR_ID = 0xA743  # Your device's Vendor ID
-PRODUCT_ID = 0x0260 # Your device's Product ID
+PRODUCT_ID = 0x0260  # Your device's Product ID
 USAGE_PAGE = 0xFF60
 USAGE = 0x61
 REPORT_LENGTH = 32
@@ -20,6 +21,13 @@ class MonitorDialog(QDialog):
 
         self.hid_interface = None
 
+        # Initialize Windows Performance Counter for CPU
+        self.cpu_query_handle = None
+        self.cpu_counter_handle = None
+        self.last_raw_data = None
+        self.is_first_sample = True  # Equivalent to m_first_get_CPU_utility in C++
+        self.initialize_cpu_counter()
+
         # Set up the timer for sending metrics every second
         self.timer = QTimer(self)
         self.timer.setInterval(1000)  # 1000 ms = 1 second
@@ -31,6 +39,38 @@ class MonitorDialog(QDialog):
     def log_status(self, message: str):
         """Append a status message to the QTextBrowser."""
         self.ui.statusBar.append(message)
+
+    def initialize_cpu_counter(self):
+        """Initialize performance counter for CPU usage."""
+        self.cpu_query_handle = win32pdh.OpenQuery()
+        windows_version = sys.getwindowsversion().major
+        if windows_version >= 10:
+            query_str = "\\Processor Information(_Total)\\% Processor Utility"
+        else:
+            query_str = "\\Processor Information(_Total)\\% Processor Time"
+        self.cpu_counter_handle = win32pdh.AddCounter(
+            self.cpu_query_handle, query_str
+        )
+        # Collect initial data to establish a baseline
+        win32pdh.CollectQueryData(self.cpu_query_handle)
+
+    def get_cpu_usage(self):
+        """Fetch CPU usage using two-point calculation logic."""
+        # Collect current data
+        win32pdh.CollectQueryData(self.cpu_query_handle)
+
+        # Get formatted counter value
+        _, formatted_value = win32pdh.GetFormattedCounterValue(
+            self.cpu_counter_handle, win32pdh.PDH_FMT_DOUBLE
+        )
+
+        if self.is_first_sample:
+            self.is_first_sample = False
+            self.last_raw_data = formatted_value  # Store the current value as baseline
+            return 0  # Return 0 for the first sample since no prior data exists
+
+        # Return the formatted value (no raw counter needed for formatted calculation)
+        return round(formatted_value)
 
     def get_hid_interface(self):
         device_interfaces = hid.enumerate(VENDOR_ID, PRODUCT_ID)
@@ -73,9 +113,15 @@ class MonitorDialog(QDialog):
             self.log_status("No active connection to disconnect.")
 
     def get_system_metrics(self):
-        cpu = int(psutil.cpu_percent(interval=0.0))
-        ram = int(psutil.virtual_memory().percent)
-        return cpu, ram
+        """Fetch system metrics: CPU and RAM usage."""
+        # Get CPU usage
+        cpu_percent = self.get_cpu_usage()
+
+        # Get RAM usage
+        mem_info = psutil.virtual_memory()
+        ram_percent = int(mem_info.percent)
+
+        return cpu_percent, ram_percent
 
     def send_raw_report(self, data):
         """Send a HID report to the device and read the response."""
